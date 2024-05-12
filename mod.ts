@@ -85,7 +85,7 @@ export async function recognize(
   }
   if (typeof options !== "object") throw new Error("Options must be object");
 
-  const args: string[] = [options.path ?? TESSERACT_PATH];
+  const args: string[] = [];
   const input = typeof file === "string" && options.stdin !== true
     ? file
     : "stdin";
@@ -136,32 +136,30 @@ export async function recognize(
     }
   }
 
-  const proc = Deno.run({
-    cmd: args,
+  const command = new Deno.Command(options.path ?? TESSERACT_PATH, {
+    args,
     stdin: "piped",
     stdout: "piped",
     stderr: "piped",
   });
+  const proc = command.spawn();
 
   if (input === "stdin" || input === "-") {
-    await proc.stdin?.write(
-      typeof file === "object" ? file : encoder.encode(file),
-    );
-    await proc.stdin.close();
+    const writer = proc.stdin.getWriter();
+    await writer.write(typeof file === "object" ? file : encoder.encode(file));
+    writer.releaseLock();
   }
+  await proc.stdin.close();
 
-  const status = await proc.status();
-  if (!status.success) {
-    const _err = await proc.stderrOutput();
-    const err = decoder.decode(_err);
-    proc.close();
+  const { stdout, stderr } = await proc.output();
+  if (stderr.byteLength > 0) {
+    const err = decoder.decode(stderr);
     throw new Error(err);
   }
 
   if (output !== "stdout" && output !== "-") return "";
   else {
-    proc.close();
-    return decoder.decode(await proc.output());
+    return decoder.decode(stdout);
   }
 }
 
@@ -171,23 +169,24 @@ export async function recognize(
  * @param path Tesseract Binary Path
  */
 export async function getLanguages(path?: string): Promise<string[]> {
-  const proc = Deno.run({
-    cmd: [path ?? TESSERACT_PATH, "--list-langs"],
+  const command = new Deno.Command(path ?? TESSERACT_PATH, {
+    args: ["--list-langs"],
     stdin: "piped",
     stdout: "piped",
     stderr: "piped",
   });
+  const proc = command.spawn();
 
-  const status = await proc.status();
-  if (!status.success) {
-    const _err = await proc.stderrOutput();
-    const err = decoder.decode(_err);
-    proc.close();
+  const { stdout, stderr } = await proc.output();
+  if (stderr.byteLength > 0) {
+    const err = decoder.decode(stderr);
+    await proc.stdin.close();
     throw new Error(err);
   }
-  proc.close();
+
+  await proc.stdin.close();
   return decoder
-    .decode(await proc.output())
+    .decode(stdout)
     .replaceAll("\r", "")
     .split("\n")
     .filter((e) => !e.startsWith("List of available languages"))
@@ -201,24 +200,24 @@ export async function getLanguages(path?: string): Promise<string[]> {
  * @param path Tesseract Binary Path
  */
 export async function getVersion(path?: string) {
-  const proc = Deno.run({
-    cmd: [path ?? TESSERACT_PATH, "-v"],
+  const command = new Deno.Command(path ?? TESSERACT_PATH, {
+    args: ["-v"],
     stdin: "piped",
     stdout: "piped",
     stderr: "piped",
   });
+  const proc = command.spawn();
 
-  const status = await proc.status();
-  if (!status.success) {
-    const _err = await proc.stderrOutput();
-    const err = decoder.decode(_err);
-    proc.close();
+  const { stdout, stderr } = await proc.output();
+  if (stderr.byteLength > 0) {
+    const err = decoder.decode(stderr);
     throw new Error(err);
   }
-  proc.close();
+
+  await proc.stdin.close();
   return (
     decoder
-      .decode(await proc.output())
+      .decode(stdout)
       .replaceAll("\r", "")
       .split("\n")[0]
       ?.split(" ")
